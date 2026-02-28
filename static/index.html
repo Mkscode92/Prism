@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prism</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .spinning { animation: spin 1s linear infinite; }
+    .pulsing  { animation: pulse 1.5s ease-in-out infinite; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+  <header class="border-b border-white/20 px-6 py-4 flex items-center gap-3">
+    <a href="/static/landing.html"><img src="/static/prism.png" alt="Prism logo" class="w-8 h-8 rounded-lg object-contain"></a>
+
+    <span class="text-lg font-bold bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">Prism</span>
+    <span class="text-slate-300 text-sm"> - Reflecting app reviews automatically into code improvements through AI agents </span>
+  </header>
+
+  <main class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+    <div class="space-y-5">
+      <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
+        <h2 class="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Connected Apps</h2>
+        <form id="appForm" class="flex gap-2 mb-3">
+          <input id="packageName" type="text" placeholder="com.example.myapp"
+            class="flex-1 bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors min-w-0" />
+          <input id="appRepoUrl" type="text" placeholder="https://github.com/org/repo"
+            class="flex-1 bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors min-w-0" />
+          <button type="submit"
+            class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors flex-shrink-0">
+            Add
+          </button>
+        </form>
+        <div id="appList" class="space-y-1.5">
+          <p class="text-slate-900 text-xs">No apps connected yet.</p>
+        </div>
+      </section>
+
+      <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
+        <h2 class="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Submit Review</h2>
+        <form id="form" class="space-y-3">
+
+          <div>
+            <label class="block text-xs text-white mb-1">Review Text *</label>
+            <textarea id="reviewText" rows="3" 
+              placeholder="e.g. App crashes immediately after tapping login on Android 14"
+              class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 resize-none transition-colors"></textarea>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-white mb-1">Star Rating</label>
+              <select id="starRating"
+                class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-violet-500 transition-colors">
+                <option value="1">⭐ 1 star</option>
+                <option value="2">⭐⭐ 2 stars</option>
+                <option value="3">⭐⭐⭐ 3 stars</option>
+                <option value="4">⭐⭐⭐⭐ 4 stars</option>
+                <option value="5">⭐⭐⭐⭐⭐ 5 stars</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-white mb-1">Review ID <span class="text-slate-600">(optional)</span></label>
+              <input id="reviewId" type="text" placeholder="auto-generated"
+                class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-white mb-1">GitHub Repo URL *</label>
+            <input id="repoUrl" type="text" placeholder="https://github.com/owner/repo"
+              class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors" />
+          </div>
+
+          <button type="submit" id="submitBtn"
+            class="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors">
+            Run Pipeline
+          </button>
+        </form>
+      </section>
+
+      <section id="pipelineCard" class="bg-slate-900 border border-white/50 rounded-xl p-5 hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Pipeline Log</h2>
+          <span id="pipelineReviewId" class="text-xs text-slate-600 font-mono"></span>
+        </div>
+        <div id="stageList" class="space-y-2"></div>
+      </section>
+
+    </div>
+
+    <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Review History</h2>
+        <button onclick="loadHistory()"
+          class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-slate-800">
+          ↻ Refresh
+        </button>
+      </div>
+      <div id="historyList" class="space-y-2">
+        <p class="text-slate-600 text-sm">No reviews yet.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const STAGES = [
+      { id: 'classify', label: 'Classify Review' },
+      { id: 'rag',      label: 'Semantic Code Search' },
+      { id: 'fix',      label: 'Generate Fix' },
+      { id: 'sandbox',  label: 'Sandbox Validation' },
+      { id: 'pr',       label: 'Open Pull Request' },
+    ]
+
+    let activeEventSource = null
+    function stageIcon(status) {
+      if (status === 'running') return `
+        <svg class="w-3.5 h-3.5 spinning text-yellow-400 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/>
+        </svg>`
+      if (status === 'success') return `<span class="text-green-400 text-xs flex-shrink-0 w-3.5 text-center">✓</span>`
+      if (status === 'error')   return `<span class="text-red-400 text-xs flex-shrink-0 w-3.5 text-center">✕</span>`
+      if (status === 'skip')    return `<span class="text-slate-600 text-xs flex-shrink-0 w-3.5 text-center">—</span>`
+      return `<span class="text-slate-700 text-xs flex-shrink-0 w-3.5 text-center">○</span>`
+    }
+
+    function stageBg(status) {
+      if (status === 'running') return 'border-yellow-500/30 bg-yellow-500/5'
+      if (status === 'success') return 'border-green-500/30 bg-green-500/5'
+      if (status === 'error')   return 'border-red-500/30 bg-red-500/5'
+      if (status === 'skip')    return 'border-slate-800 bg-slate-800/40'
+      return 'border-slate-800'
+    }
+
+    function renderStages(stageData = {}) {
+      document.getElementById('stageList').innerHTML = STAGES.map(s => {
+        const info   = stageData[s.id] || {}
+        const status = info.status || 'pending'
+        const msg    = info.message || ''
+        return `
+          <div id="stage-${s.id}" class="flex items-start gap-2.5 px-3 py-2.5 rounded-lg border ${stageBg(status)} transition-all duration-300">
+            <div class="mt-0.5">${stageIcon(status)}</div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm text-white leading-none">${s.label}</p>
+              ${msg ? `<p class="text-xs text-slate-500 mt-1 truncate" title="${msg}">${msg}</p>` : ''}
+            </div>
+          </div>`
+      }).join('')
+    }
+
+    function updateStage(stageId, status, message = '', prUrl = '') {
+      const el = document.getElementById(`stage-${stageId}`)
+      if (!el) return
+      el.className = `flex items-start gap-2.5 px-3 py-2.5 rounded-lg border ${stageBg(status)} transition-all duration-300`
+      el.querySelector('div').innerHTML = stageIcon(status)
+      const body = el.querySelector('.flex-1')
+      const existing = body.querySelector('.text-xs')
+      if (message) {
+        if (existing) existing.textContent = message
+        else body.insertAdjacentHTML('beforeend', `<p class="text-xs text-slate-500 mt-1 truncate" title="${message}">${message}</p>`)
+      }
+      if (prUrl) {
+        body.insertAdjacentHTML('beforeend',
+          `<a href="${prUrl}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300 hover:underline mt-1 block transition-colors">View PR →</a>`)
+      }
+    }
+
+    document.getElementById('form').addEventListener('submit', async e => {
+      e.preventDefault()
+
+      const text   = document.getElementById('reviewText').value.trim()
+      const repo   = document.getElementById('repoUrl').value.trim()
+      const rating = parseInt(document.getElementById('starRating').value)
+      const rid    = document.getElementById('reviewId').value.trim() || `ui-${Date.now()}`
+
+      if (!text)  return alert('Review text is required.')
+      if (!repo)  return alert('GitHub repo URL is required.')
+
+      const review = {
+        reviewId: rid,
+        repo_url: repo,
+        comments: [{ userComment: { text, starRating: rating } }]
+      }
+
+      const payload = {
+        message: {
+          data: btoa(JSON.stringify(review)),
+          messageId: rid,
+          publishTime: new Date().toISOString()
+        },
+        subscription: 'projects/ui/subscriptions/manual'
+      }
+
+      const card = document.getElementById('pipelineCard')
+      card.classList.remove('hidden')
+      document.getElementById('pipelineReviewId').textContent = rid
+      renderStages()
+
+      const btn = document.getElementById('submitBtn')
+      btn.disabled = true
+      btn.textContent = 'Running…'
+
+      let result
+      try {
+        const resp = await fetch('/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        result = await resp.json()
+      } catch (err) {
+        alert('Network error: ' + err.message)
+        btn.disabled = false
+        btn.textContent = 'Run Pipeline'
+        return
+      }
+
+      if (result.status !== 'accepted') {
+        alert('Webhook error: ' + JSON.stringify(result))
+        btn.disabled = false
+        btn.textContent = 'Run Pipeline'
+        return
+      }
+
+      if (activeEventSource) activeEventSource.close()
+      activeEventSource = new EventSource(`/api/pipeline/${result.review_id}/stream`)
+
+      activeEventSource.onmessage = e => {
+        const ev = JSON.parse(e.data)
+
+        if (ev.type === 'stage') {
+          updateStage(ev.stage, ev.status, ev.message || '')
+        }
+        if (ev.type === 'pr_created') {
+          updateStage('pr', 'success', ev.pr_url, ev.pr_url)
+        }
+        if (ev.type === 'snapshot') {
+          renderStages(ev.data.stages || {})
+          if (ev.data.pr_url) updateStage('pr', 'success', ev.data.pr_url, ev.data.pr_url)
+        }
+        if (ev.type === 'done') {
+          activeEventSource.close()
+          btn.disabled = false
+          btn.textContent = 'Run Pipeline'
+          loadHistory()
+        }
+        if (ev.type === 'heartbeat') { /* keep-alive, ignore */ }
+      }
+
+      activeEventSource.onerror = () => {
+        activeEventSource.close()
+        btn.disabled = false
+        btn.textContent = 'Run Pipeline'
+      }
+    })
+
+    const INTENT_STYLE = {
+      bug:     'bg-red-500/15 text-red-400',
+      feature: 'bg-blue-500/15 text-blue-400',
+      ux:      'bg-orange-500/15 text-orange-400',
+      vague:   'bg-slate-700 text-slate-400',
+    }
+
+    async function loadHistory() {
+      let reviews
+      try {
+        reviews = await fetch('/api/reviews').then(r => r.json())
+      } catch { return }
+
+      const container = document.getElementById('historyList')
+      if (!reviews.length) {
+        container.innerHTML = '<p class="text-slate-600 text-sm">No reviews yet.</p>'
+        return
+      }
+
+      container.innerHTML = reviews.map(r => {
+        const badge = r.intent
+          ? `<span class="px-2 py-0.5 rounded-full text-xs font-medium ${INTENT_STYLE[r.intent] || 'bg-slate-700 text-slate-300'}">${r.intent}</span>`
+          : `<span class="text-xs text-slate-600">classifying…</span>`
+
+        const dot = r.done
+          ? `<span class="w-1.5 h-1.5 rounded-full bg-green-400 inline-block flex-shrink-0"></span>`
+          : `<span class="w-1.5 h-1.5 rounded-full bg-yellow-400 pulsing inline-block flex-shrink-0"></span>`
+
+        const stars = r.star_rating ? '⭐'.repeat(r.star_rating) : ''
+
+        return `
+          <div class="px-3 py-3 rounded-lg bg-slate-950 border border-white/20 hover:border-white/40 transition-colors">
+            <div class="flex items-start justify-between gap-2 mb-2">
+              <p class="text-sm text-white flex-1 line-clamp-2 leading-snug">${r.text}</p>
+              ${badge}
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              ${dot}
+              <span class="text-xs text-slate-600 font-mono truncate max-w-[120px]" title="${r.review_id}">${r.review_id}</span>
+              ${stars ? `<span class="text-xs text-slate-500">${stars}</span>` : ''}
+              ${r.pr_url
+                ? `<a href="${r.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300 hover:underline ml-auto transition-colors">View PR →</a>`
+                : ''}
+            </div>
+          </div>`
+      }).join('')
+    }
+
+    async function loadApps() {
+      const apps = await fetch('/api/apps').then(r => r.json())
+      const container = document.getElementById('appList')
+      const entries = Object.entries(apps)
+      if (!entries.length) {
+        container.innerHTML = '<p class="text-slate-600 text-xs">No apps connected yet.</p>'
+        return
+      }
+      container.innerHTML = entries.map(([pkg, repo]) => `
+        <div class="flex items-center gap-2 px-3 py-2 bg-slate-800 border border-white/20 rounded-lg">
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-mono text-violet-400 truncate">${pkg}</p>
+            <p class="text-xs text-slate-500 truncate">${repo}</p>
+          </div>
+          <button onclick="removeApp('${pkg}')"
+            class="text-slate-600 hover:text-red-400 transition-colors text-xs flex-shrink-0">✕</button>
+        </div>`).join('')
+    }
+
+    document.getElementById('appForm').addEventListener('submit', async e => {
+      e.preventDefault()
+      const pkg  = document.getElementById('packageName').value.trim()
+      const repo = document.getElementById('appRepoUrl').value.trim()
+      if (!pkg || !repo) return
+      await fetch('/api/apps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package_name: pkg, repo_url: repo })
+      })
+      document.getElementById('packageName').value = ''
+      document.getElementById('appRepoUrl').value = ''
+      loadApps()
+    })
+
+    async function removeApp(pkg) {
+      await fetch(`/api/apps/${encodeURIComponent(pkg)}`, { method: 'DELETE' })
+      loadApps()
+    }
+    
+    loadHistory()
+    loadApps()
+  </script>
+</body>
+</html>

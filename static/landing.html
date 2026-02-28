@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prism</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-12px); }
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 0 40px 8px rgba(139,92,246,0.25); }
+      50%       { box-shadow: 0 0 70px 16px rgba(99,102,241,0.4); }
+    }
+    .float  { animation: float 4s ease-in-out infinite; }
+    .fade-1 { animation: fadeUp 0.6s ease both; animation-delay: 0.1s; }
+    .fade-2 { animation: fadeUp 0.6s ease both; animation-delay: 0.3s; }
+    .fade-3 { animation: fadeUp 0.6s ease both; animation-delay: 0.5s; }
+    .fade-4 { animation: fadeUp 0.6s ease both; animation-delay: 0.7s; }
+    .glow   { animation: glow 3s ease-in-out infinite; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col items-center justify-center relative overflow-hidden">
+  <div class="absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.03)_1px,transparent_1px)] bg-[size:48px_48px] pointer-events-none"></div>
+  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+  <div class="relative z-10 flex flex-col items-center gap-6 text-center px-6">
+    <div class="fade-1 float glow rounded-2xl p-1">
+      <img src="/static/prism.png" alt="Prism logo" class="w-60 h-60 rounded-2xl object-contain">
+    </div>
+    <h1 class="fade-2 text-5xl font-bold tracking-tight bg-gradient-to-r from-violet-400 via-indigo-400 to-sky-400 bg-clip-text text-transparent">
+      Prism
+    </h1>
+    <p class="fade-3 text-slate-400 text-lg max-w-md leading-relaxed text-white">
+      Reflecting app reviews automatically into code improvements through AI agents.
+
+    </p>
+    <a href="/dashboard" class="fade-4 mt-2 inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 active:bg-violet-700 transition-colors text-white font-semibold px-8 py-3 rounded-xl text-base shadow-lg shadow-violet-900/40">
+      Open Dashboard
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
+      </svg>
+    </a>
+  </div>
+  <div class="absolute bottom-6 text-slate-600 text-xs">v0.1.0</div>
+
+</body>
+</html>
