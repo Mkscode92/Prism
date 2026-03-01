@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Literal
 import anthropic
-from config import settings
+from .config import settings
 
 logger = logging.getLogger("prism.classifier")
 client = anthropic.Anthropic(api_key=settings.anthropic_api_key)

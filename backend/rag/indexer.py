@@ -13,7 +13,7 @@ import git
 import voyageai
 from pinecone import Pinecone
 
-from config import settings
+from ..config import settings
 
 logger = logging.getLogger("prism.rag.indexer")
 

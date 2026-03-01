@@ -3,8 +3,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 import anthropic
-from classifier import ClassificationResult
-from config import settings
+from .classifier import ClassificationResult
+from .config import settings
 
 logger = logging.getLogger("prism.fix_generator")
 

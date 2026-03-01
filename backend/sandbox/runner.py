@@ -6,8 +6,8 @@ from pathlib import Path
 
 import modal
 
-from config import settings
-from fix_generator import FixResult
+from ..config import settings
+from ..fix_generator import FixResult
 
 logger = logging.getLogger("prism.sandbox")
 

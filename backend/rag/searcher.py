@@ -4,9 +4,9 @@ import logging
 
 from pinecone import Pinecone
 
-from config import settings
-from fix_generator import CodeChunk
-from rag.indexer import _namespace_for, _voyage
+from ..config import settings
+from ..fix_generator import CodeChunk
+from .indexer import _namespace_for, _voyage
 
 logger = logging.getLogger("prism.rag.searcher")
 

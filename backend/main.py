@@ -14,15 +14,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import settings
+from .config import settings
 
-from classifier import classify_review
-from fix_generator import generate_fix, refine_fix
-from github_client.pr_creator import create_pr
-from poller import fetch_reviews_debug, poll_app_once, poll_loop
-from rag.indexer import ensure_repo_indexed
-from rag.searcher import search_code
-from sandbox.runner import run_in_sandbox
+from .classifier import classify_review
+from .fix_generator import generate_fix, refine_fix
+from .github_client.pr_creator import create_pr
+from .poller import fetch_reviews_debug, poll_app_once, poll_loop
+from .rag.indexer import ensure_repo_indexed
+from .rag.searcher import search_code
+from .sandbox.runner import run_in_sandbox
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +39,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="PRism", version="0.1.0", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +132,12 @@ class PlayStoreReview(BaseModel):
 
 @app.get("/")
 def serve_landing():
-    return FileResponse("static/landing.html")
+    return FileResponse("frontend/landing.html")
 
 
 @app.get("/dashboard")
 def serve_dashboard():
-    return FileResponse("static/index.html")
+    return FileResponse("frontend/index.html")
 
 
 @app.get("/api/reviews")

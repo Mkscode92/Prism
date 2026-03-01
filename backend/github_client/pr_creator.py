@@ -5,10 +5,10 @@ import logging
 
 import httpx
 
-from classifier import ClassificationResult
-from config import settings
-from fix_generator import FixResult
-from sandbox.runner import SandboxResult
+from ..classifier import ClassificationResult
+from ..config import settings
+from ..fix_generator import FixResult
+from ..sandbox.runner import SandboxResult
 
 logger = logging.getLogger("prism.github")
 
@@ -91,6 +91,14 @@ def _create_branch(
         f"/repos/{owner}/{repo}/git/refs",
         json={"ref": f"refs/heads/{branch_name}", "sha": sha},
     )
+    if resp.status_code == 422 and "already exists" in resp.text:
+        # Branch left over from a previous run — force-reset it to current HEAD
+        patch = client.patch(
+            f"/repos/{owner}/{repo}/git/refs/heads/{branch_name}",
+            json={"sha": sha, "force": True},
+        )
+        patch.raise_for_status()
+        return
     resp.raise_for_status()
 
 
@@ -151,6 +159,16 @@ def _open_pull_request(
             "draft": False,
         },
     )
+    if resp.status_code == 422 and "already exists" in resp.text:
+        # PR already open for this branch — fetch its URL
+        existing = client.get(
+            f"/repos/{owner}/{repo}/pulls",
+            params={"head": f"{owner}:{branch_name}", "state": "open"},
+        )
+        existing.raise_for_status()
+        pulls = existing.json()
+        if pulls:
+            return pulls[0]["html_url"]
     resp.raise_for_status()
     return resp.json()["html_url"]
 
