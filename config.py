@@ -3,10 +3,9 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
-    # Gemini, for AI-gen fixes after a review is posted
-    gemini_api_key: str = Field(..., validation_alias="GEMINI_API_KEY")
-    gemini_model: str = Field("gemini-flash-latest", validation_alias="GEMINI_MODEL")
-    # var : type = Field ("model", validation_alias = key)
+    # Anthropic, for AI-gen fixes after a review is posted
+    anthropic_api_key: str = Field(..., validation_alias="ANTHROPIC_API_KEY")
+    claude_model: str = Field("claude-sonnet-4-6", validation_alias="CLAUDE_MODEL")
 
     # Voyage AI
     voyage_api_key: str = Field(..., validation_alias="VOYAGE_API_KEY")
@@ -26,11 +25,15 @@ class Settings(BaseSettings):
     # Modal
     modal_app_name: str = Field("prism-sandbox", validation_alias="MODAL_APP_NAME")
 
+    # Poller
+    poll_interval_seconds: int = Field(600, validation_alias="POLL_INTERVAL_SECONDS")
+    max_pending_reviews: int = Field(10, validation_alias="MAX_PENDING_REVIEWS")
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "populate_by_name": True,
-        "extra" : "ignore"
+        "extra": "ignore"
     }
 
 

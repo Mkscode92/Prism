@@ -15,12 +15,13 @@
 <body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
   <header class="border-b border-white/20 px-6 py-4 flex items-center gap-3">
     <a href="/static/landing.html"><img src="/static/prism.png" alt="Prism logo" class="w-8 h-8 rounded-lg object-contain"></a>
-
     <span class="text-lg font-bold bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">Prism</span>
     <span class="text-slate-300 text-sm"> - Reflecting app reviews automatically into code improvements through AI agents </span>
   </header>
 
   <main class="max-w-6xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+
+    <!-- LEFT COLUMN -->
     <div class="space-y-5">
       <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
         <h2 class="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Connected Apps</h2>
@@ -35,21 +36,19 @@
           </button>
         </form>
         <div id="appList" class="space-y-1.5">
-          <p class="text-slate-900 text-xs">No apps connected yet.</p>
+          <p class="text-slate-600 text-xs">No apps connected yet.</p>
         </div>
       </section>
 
       <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
         <h2 class="text-sm font-semibold text-white mb-4 uppercase tracking-wide">Submit Review</h2>
         <form id="form" class="space-y-3">
-
           <div>
             <label class="block text-xs text-white mb-1">Review Text *</label>
-            <textarea id="reviewText" rows="3" 
+            <textarea id="reviewText" rows="3"
               placeholder="e.g. App crashes immediately after tapping login on Android 14"
               class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 resize-none transition-colors"></textarea>
           </div>
-
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-xs text-white mb-1">Star Rating</label>
@@ -68,13 +67,11 @@
                 class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors" />
             </div>
           </div>
-
           <div>
             <label class="block text-xs text-white mb-1">GitHub Repo URL *</label>
             <input id="repoUrl" type="text" placeholder="https://github.com/owner/repo"
               class="w-full bg-slate-800 border border-white/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-violet-500 transition-colors" />
           </div>
-
           <button type="submit" id="submitBtn"
             class="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors">
             Run Pipeline
@@ -89,22 +86,40 @@
         </div>
         <div id="stageList" class="space-y-2"></div>
       </section>
-
     </div>
 
-    <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Review History</h2>
-        <button onclick="loadHistory()"
-          class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-slate-800">
-          ↻ Refresh
-        </button>
-      </div>
-      <div id="historyList" class="space-y-2">
-        <p class="text-slate-600 text-sm">No reviews yet.</p>
-      </div>
-    </section>
+    <!-- RIGHT COLUMN -->
+    <div class="space-y-5">
 
+      <!-- Pending Reviews (from poller) -->
+      <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold text-white uppercase tracking-wide">Pending Reviews</h2>
+          <div class="flex items-center gap-3">
+            <span id="pendingBadge" class="text-xs font-mono text-slate-600">0 / 10</span>
+            <span class="text-xs text-slate-600">auto-refreshes every 30s</span>
+          </div>
+        </div>
+        <div id="pendingList" class="space-y-2">
+          <p class="text-slate-600 text-sm">No low-rated reviews in the last 15 minutes.</p>
+        </div>
+      </section>
+
+      <!-- Review History -->
+      <section class="bg-slate-900 border border-white/50 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wide">Review History</h2>
+          <button onclick="loadHistory()"
+            class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-slate-800">
+            ↻ Refresh
+          </button>
+        </div>
+        <div id="historyList" class="space-y-2">
+          <p class="text-slate-600 text-sm">No reviews yet.</p>
+        </div>
+      </section>
+
+    </div>
   </main>
 
   <script>
@@ -116,7 +131,13 @@
       { id: 'pr',       label: 'Open Pull Request' },
     ]
 
+    const MAX_PENDING = 10
     let activeEventSource = null
+
+    // -------------------------------------------------------------------------
+    // Pipeline card helpers
+    // -------------------------------------------------------------------------
+
     function stageIcon(status) {
       if (status === 'running') return `
         <svg class="w-3.5 h-3.5 spinning text-yellow-400 flex-shrink-0" viewBox="0 0 24 24" fill="none">
@@ -169,36 +190,65 @@
       }
     }
 
+    // -------------------------------------------------------------------------
+    // Shared pipeline launcher (used by both manual form and pending buttons)
+    // -------------------------------------------------------------------------
+
+    function attachPipelineStream(reviewId, onDone) {
+      const card = document.getElementById('pipelineCard')
+      card.classList.remove('hidden')
+      document.getElementById('pipelineReviewId').textContent = reviewId
+      renderStages()
+
+      if (activeEventSource) activeEventSource.close()
+      activeEventSource = new EventSource(`/api/pipeline/${reviewId}/stream`)
+
+      activeEventSource.onmessage = e => {
+        const ev = JSON.parse(e.data)
+        if (ev.type === 'stage')    updateStage(ev.stage, ev.status, ev.message || '')
+        if (ev.type === 'pr_created') updateStage('pr', 'success', ev.pr_url, ev.pr_url)
+        if (ev.type === 'snapshot') {
+          renderStages(ev.data.stages || {})
+          if (ev.data.pr_url) updateStage('pr', 'success', ev.data.pr_url, ev.data.pr_url)
+        }
+        if (ev.type === 'done') {
+          activeEventSource.close()
+          loadHistory()
+          if (onDone) onDone()
+        }
+        if (ev.type === 'heartbeat') { /* keep-alive */ }
+      }
+      activeEventSource.onerror = () => {
+        activeEventSource.close()
+        if (onDone) onDone()
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Manual submit form
+    // -------------------------------------------------------------------------
+
     document.getElementById('form').addEventListener('submit', async e => {
       e.preventDefault()
-
       const text   = document.getElementById('reviewText').value.trim()
       const repo   = document.getElementById('repoUrl').value.trim()
       const rating = parseInt(document.getElementById('starRating').value)
       const rid    = document.getElementById('reviewId').value.trim() || `ui-${Date.now()}`
 
-      if (!text)  return alert('Review text is required.')
-      if (!repo)  return alert('GitHub repo URL is required.')
-
-      const review = {
-        reviewId: rid,
-        repo_url: repo,
-        comments: [{ userComment: { text, starRating: rating } }]
-      }
+      if (!text) return alert('Review text is required.')
+      if (!repo) return alert('GitHub repo URL is required.')
 
       const payload = {
         message: {
-          data: btoa(JSON.stringify(review)),
+          data: btoa(JSON.stringify({
+            reviewId: rid, repo_url: repo,
+            comments: [{ userComment: { text, starRating: rating } }]
+          })),
           messageId: rid,
           publishTime: new Date().toISOString()
         },
         subscription: 'projects/ui/subscriptions/manual'
       }
-
-      const card = document.getElementById('pipelineCard')
-      card.classList.remove('hidden')
-      document.getElementById('pipelineReviewId').textContent = rid
-      renderStages()
 
       const btn = document.getElementById('submitBtn')
       btn.disabled = true
@@ -226,37 +276,99 @@
         return
       }
 
-      if (activeEventSource) activeEventSource.close()
-      activeEventSource = new EventSource(`/api/pipeline/${result.review_id}/stream`)
-
-      activeEventSource.onmessage = e => {
-        const ev = JSON.parse(e.data)
-
-        if (ev.type === 'stage') {
-          updateStage(ev.stage, ev.status, ev.message || '')
-        }
-        if (ev.type === 'pr_created') {
-          updateStage('pr', 'success', ev.pr_url, ev.pr_url)
-        }
-        if (ev.type === 'snapshot') {
-          renderStages(ev.data.stages || {})
-          if (ev.data.pr_url) updateStage('pr', 'success', ev.data.pr_url, ev.data.pr_url)
-        }
-        if (ev.type === 'done') {
-          activeEventSource.close()
-          btn.disabled = false
-          btn.textContent = 'Run Pipeline'
-          loadHistory()
-        }
-        if (ev.type === 'heartbeat') { /* keep-alive, ignore */ }
-      }
-
-      activeEventSource.onerror = () => {
-        activeEventSource.close()
+      attachPipelineStream(result.review_id, () => {
         btn.disabled = false
         btn.textContent = 'Run Pipeline'
-      }
+      })
     })
+
+    // -------------------------------------------------------------------------
+    // Pending reviews
+    // -------------------------------------------------------------------------
+
+    function timeAgo(isoString) {
+      const diff = Math.floor((Date.now() - new Date(isoString)) / 1000)
+      if (diff < 60)   return `${diff}s ago`
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+      return `${Math.floor(diff / 3600)}h ago`
+    }
+
+    async function loadPendingReviews() {
+      let pending
+      try {
+        pending = await fetch('/api/pending-reviews').then(r => r.json())
+      } catch { return }
+
+      const badge = document.getElementById('pendingBadge')
+      badge.textContent = `${pending.length} / ${MAX_PENDING}`
+      badge.className = pending.length > 0
+        ? 'text-xs font-mono text-amber-400'
+        : 'text-xs font-mono text-slate-600'
+
+      const container = document.getElementById('pendingList')
+      if (!pending.length) {
+        container.innerHTML = '<p class="text-slate-600 text-sm">No low-rated reviews in the last 15 minutes.</p>'
+        return
+      }
+
+      container.innerHTML = pending.map(r => {
+        const stars = '⭐'.repeat(r.score)
+        const ago   = timeAgo(r.scraped_at)
+        const author = r.author ? `<span class="text-slate-500">${escHtml(r.author)}</span>` : ''
+        return `
+          <div class="px-3 py-3 rounded-lg bg-slate-950 border border-amber-500/20 hover:border-amber-500/40 transition-colors">
+            <div class="flex items-start gap-2 mb-2">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-white line-clamp-2 leading-snug">${escHtml(r.text)}</p>
+                <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span class="text-xs">${stars}</span>
+                  ${author}
+                  <span class="text-xs text-slate-600">${ago}</span>
+                  <span class="text-xs text-slate-700 font-mono truncate max-w-[120px]" title="${r.package_name}">${r.package_name}</span>
+                </div>
+              </div>
+              <button onclick="dismissPending('${r.review_id}')"
+                class="text-slate-600 hover:text-red-400 transition-colors text-xs flex-shrink-0 mt-0.5">✕</button>
+            </div>
+            <button onclick="runPending('${r.review_id}', this)"
+              class="w-full bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 text-amber-300 text-xs font-medium py-1.5 px-3 rounded-lg transition-colors">
+              Run Pipeline →
+            </button>
+          </div>`
+      }).join('')
+    }
+
+    async function runPending(reviewId, btn) {
+      btn.disabled = true
+      btn.textContent = 'Starting…'
+      try {
+        const resp = await fetch(`/api/pending-reviews/${reviewId}/run`, { method: 'POST' })
+        const result = await resp.json()
+        if (result.status === 'accepted') {
+          await loadPendingReviews()
+          attachPipelineStream(result.review_id, loadPendingReviews)
+        } else {
+          btn.disabled = false
+          btn.textContent = 'Run Pipeline →'
+        }
+      } catch (err) {
+        btn.disabled = false
+        btn.textContent = 'Run Pipeline →'
+      }
+    }
+
+    async function dismissPending(reviewId) {
+      await fetch(`/api/pending-reviews/${reviewId}`, { method: 'DELETE' })
+      loadPendingReviews()
+    }
+
+    function escHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+    }
+
+    // -------------------------------------------------------------------------
+    // Review history
+    // -------------------------------------------------------------------------
 
     const INTENT_STYLE = {
       bug:     'bg-red-500/15 text-red-400',
@@ -291,7 +403,7 @@
         return `
           <div class="px-3 py-3 rounded-lg bg-slate-950 border border-white/20 hover:border-white/40 transition-colors">
             <div class="flex items-start justify-between gap-2 mb-2">
-              <p class="text-sm text-white flex-1 line-clamp-2 leading-snug">${r.text}</p>
+              <p class="text-sm text-white flex-1 line-clamp-2 leading-snug">${escHtml(r.text)}</p>
               ${badge}
             </div>
             <div class="flex items-center gap-2 flex-wrap">
@@ -305,6 +417,10 @@
           </div>`
       }).join('')
     }
+
+    // -------------------------------------------------------------------------
+    // App registry
+    // -------------------------------------------------------------------------
 
     async function loadApps() {
       const apps = await fetch('/api/apps').then(r => r.json())
@@ -344,9 +460,15 @@
       await fetch(`/api/apps/${encodeURIComponent(pkg)}`, { method: 'DELETE' })
       loadApps()
     }
-    
+
+    // -------------------------------------------------------------------------
+    // Init + auto-refresh
+    // -------------------------------------------------------------------------
+
     loadHistory()
     loadApps()
+    loadPendingReviews()
+    setInterval(loadPendingReviews, 30000)
   </script>
 </body>
 </html>

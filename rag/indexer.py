@@ -20,7 +20,7 @@ logger = logging.getLogger("prism.rag.indexer")
 _voyage = voyageai.Client(api_key=settings.voyage_api_key)
 _pc = Pinecone(api_key=settings.pinecone_api_key)
 
-SUPPORTED_EXTENSIONS = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".kt"}
+SUPPORTED_EXTENSIONS = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".kt", ".xml"}
 VOYAGE_BATCH_SIZE = 128
 MIN_FUNCTION_LINES = 3
 
@@ -128,6 +128,8 @@ def _collect_chunks(repo_url: str, repo_root: Path) -> list[FunctionChunk]:
             chunks.extend(_chunk_python(repo_url, rel_str, source))
         elif path.suffix in {".java", ".kt"}:
             chunks.extend(_chunk_java(repo_url, rel_str, source))
+        elif path.suffix == ".xml":
+            chunks.extend(_chunk_xml(repo_url, rel_str, source, parts))
         else:
             chunks.extend(_chunk_js(repo_url, rel_str, source))
 
@@ -240,6 +242,35 @@ def _chunk_js(repo_url: str, file_path: str, source: str) -> list[FunctionChunk]
         )
 
     return chunks
+
+
+def _chunk_xml(repo_url: str, file_path: str, source: str, parts: tuple) -> list[FunctionChunk]:
+    """
+    Index Android XML resource files (themes, styles, colors, strings, etc.).
+    Only indexes files under res/values/ — skips layouts, drawables, manifests, etc.
+    Each file is treated as one chunk since these files are small and tightly related.
+    """
+    # Only care about Android resource value files (themes, styles, colors, etc.)
+    if "res" not in parts or "values" not in parts:
+        return []
+
+    lines = source.splitlines()
+    if len(lines) < 2:
+        return []
+
+    # Use the filename (without extension) as the "function name" for display
+    name = Path(file_path).stem  # e.g. "themes", "colors", "styles"
+
+    return [
+        FunctionChunk(
+            repo_url=repo_url,
+            file_path=file_path,
+            function_name=name,
+            source_text=source[:4000],  # cap to avoid huge XML files
+            start_line=1,
+            end_line=len(lines),
+        )
+    ]
 
 
 def _embed_and_upsert(chunks: list[FunctionChunk], namespace: str) -> None:

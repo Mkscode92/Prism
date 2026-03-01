@@ -1,14 +1,14 @@
 from __future__ import annotations
 import logging
+import re
 from dataclasses import dataclass, field
-from google import genai
-from google.genai import types
+import anthropic
 from classifier import ClassificationResult
 from config import settings
 
 logger = logging.getLogger("prism.fix_generator")
 
-client = genai.Client(api_key=settings.gemini_api_key)
+client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 # ---------------------------------------------------------------------------
 # Data contracts
@@ -34,36 +34,36 @@ class FixResult:
 
 
 # ---------------------------------------------------------------------------
-# Tool definition (Using modern types.FunctionDeclaration)
+# Tool definition
 # ---------------------------------------------------------------------------
 
-PROPOSE_FIX_FUNC = types.FunctionDeclaration(
-    name="propose_fix",
-    description=(
+PROPOSE_FIX_TOOL = {
+    "name": "propose_fix",
+    "description": (
         "Propose targeted code patches to address a bug or UX issue reported by a user. "
         "Return complete file content (not diffs) for each modified file."
     ),
-    parameters={
-        "type": "OBJECT",
+    "input_schema": {
+        "type": "object",
         "properties": {
             "explanation": {
-                "type": "STRING",
+                "type": "string",
                 "description": (
                     "Clear explanation of the root cause and exactly what the fix does. "
                     "This will appear verbatim in the GitHub PR description."
                 ),
             },
             "patches": {
-                "type": "ARRAY",
+                "type": "array",
                 "items": {
-                    "type": "OBJECT",
+                    "type": "object",
                     "properties": {
                         "file_path": {
-                            "type": "STRING",
+                            "type": "string",
                             "description": "Relative file path from the repo root.",
                         },
                         "patched_source": {
-                            "type": "STRING",
+                            "type": "string",
                             "description": (
                                 "Complete new content for this file. "
                                 "Must be the entire file, not just the changed lines."
@@ -77,7 +77,7 @@ PROPOSE_FIX_FUNC = types.FunctionDeclaration(
         },
         "required": ["explanation", "patches"],
     },
-)
+}
 
 FIX_SYSTEM = """
 You are a senior software engineer fixing a bug or UX issue reported by a mobile app user.
@@ -102,40 +102,28 @@ def generate_fix(
     repo_url: str,
 ) -> FixResult | None:
     """
-    Ask Gemini to propose a code fix based on the user review and relevant code context.
-    Uses Thinking Mode (if Pro) to ensure high-quality architectural reasoning.
+    Ask Claude to propose a code fix based on the user review and relevant code context.
     """
     user_message = _build_context_message(classification, code_chunks, repo_url)
 
-    # 2. Modern configuration pattern
-    # We use ThinkingConfig to leverage Gemini 3.1's advanced reasoning
-    config = types.GenerateContentConfig(
-        system_instruction=FIX_SYSTEM,
-        tools=[types.Tool(function_declarations=[PROPOSE_FIX_FUNC])],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode="ANY",
-                allowed_function_names=["propose_fix"]
-            )
-        ),
+    response = client.messages.create(
+        model=settings.claude_model,
+        max_tokens=8192,
+        system=FIX_SYSTEM,
+        tools=[PROPOSE_FIX_TOOL],
+        tool_choice={"type": "tool", "name": "propose_fix"},
+        messages=[{"role": "user", "content": user_message}],
     )
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=user_message,
-        config=config
-    )
-
-    # 3. Handle the structured output from the Tool call
     try:
-        fc = response.candidates[0].content.parts[0].function_call
-        args = fc.args
-    except (AttributeError, IndexError):
-        logger.error("Gemini failed to return a valid function call for propose_fix")
+        tool_use = next(b for b in response.content if b.type == "tool_use")
+        args = tool_use.input
+    except StopIteration:
+        logger.error("Claude failed to return a valid tool call for propose_fix")
         return None
 
     if not args.get("patches"):
-        logger.warning("Gemini declined to generate patches: %s", args.get("explanation", ""))
+        logger.warning("Claude declined to generate patches: %s", args.get("explanation", ""))
         return None
 
     patches = {p["file_path"]: p["patched_source"] for p in args["patches"]}
@@ -150,8 +138,8 @@ def refine_fix(
     repo_url: str,
 ) -> FixResult | None:
     """
-    Ask Gemini to correct a patch that failed lint validation.
-    Sends the original patches + lint error output so Gemini can self-correct.
+    Ask Claude to correct a patch that failed lint validation.
+    Sends the original patches + lint error output so Claude can self-correct.
     """
     lines: list[str] = []
 
@@ -163,6 +151,12 @@ def refine_fix(
     lines.append("```")
     lines.append(lint_errors.strip())
     lines.append("```")
+
+    # Show the exact lines around each error so Claude can pinpoint the issue
+    error_context = _extract_error_context(lint_errors, original_fix.patches)
+    if error_context:
+        lines.append("\n## Exact Location of Each Error (>>> marks the error line)")
+        lines.append(error_context)
 
     lines.append("\n## Your Previous Patches (contain the errors above)")
     for file_path, content in original_fix.patches.items():
@@ -183,32 +177,24 @@ def refine_fix(
     lines.append(f"\n## Repository\n{repo_url}")
     lines.append("\nReturn corrected complete file content with all syntax errors fixed.")
 
-    config = types.GenerateContentConfig(
-        system_instruction=FIX_SYSTEM,
-        tools=[types.Tool(function_declarations=[PROPOSE_FIX_FUNC])],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode="ANY",
-                allowed_function_names=["propose_fix"]
-            )
-        ),
-    )
-
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents="\n".join(lines),
-        config=config,
+    response = client.messages.create(
+        model=settings.claude_model,
+        max_tokens=8192,
+        system=FIX_SYSTEM,
+        tools=[PROPOSE_FIX_TOOL],
+        tool_choice={"type": "tool", "name": "propose_fix"},
+        messages=[{"role": "user", "content": "\n".join(lines)}],
     )
 
     try:
-        fc = response.candidates[0].content.parts[0].function_call
-        args = fc.args
-    except (AttributeError, IndexError):
-        logger.error("Gemini failed to return a valid function call for refine_fix")
+        tool_use = next(b for b in response.content if b.type == "tool_use")
+        args = tool_use.input
+    except StopIteration:
+        logger.error("Claude failed to return a valid tool call for refine_fix")
         return None
 
     if not args.get("patches"):
-        logger.warning("Gemini declined to generate refined patches")
+        logger.warning("Claude declined to generate refined patches")
         return None
 
     patches = {p["file_path"]: p["patched_source"] for p in args["patches"]}
@@ -218,6 +204,35 @@ def refine_fix(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+_KTLINT_ERROR_RE = re.compile(r"/workspace/repo/(.+?):(\d+):\d+: (.+)")
+
+def _extract_error_context(lint_errors: str, patches: dict[str, str]) -> str:
+    """
+    Parse ktlint error lines and extract the surrounding source lines from the
+    patched file, marking the exact error line with '>>>'.
+    """
+    sections: list[str] = []
+    for match in _KTLINT_ERROR_RE.finditer(lint_errors):
+        file_path = match.group(1)
+        line_num = int(match.group(2))
+        message = match.group(3)
+        if file_path not in patches:
+            continue
+        source_lines = patches[file_path].splitlines()
+        start = max(0, line_num - 5)
+        end = min(len(source_lines), line_num + 4)
+        snippet_lines = []
+        for i in range(start, end):
+            prefix = ">>>" if i + 1 == line_num else "   "
+            snippet_lines.append(f"{prefix} {i + 1}: {source_lines[i]}")
+        sections.append(
+            f"\n**`{file_path}` line {line_num}:** {message}\n```\n"
+            + "\n".join(snippet_lines)
+            + "\n```"
+        )
+    return "\n".join(sections)
+
 
 def _build_context_message(
     classification: ClassificationResult,

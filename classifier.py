@@ -2,12 +2,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Literal
-from google import genai
-from google.genai import types 
+import anthropic
 from config import settings
 
 logger = logging.getLogger("prism.classifier")
-client = genai.Client(api_key=settings.gemini_api_key)
+client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
 
 @dataclass
 class ClassificationResult:
@@ -21,40 +21,39 @@ class ClassificationResult:
     star_rating: int | None = None
 
 
-
-CLASSIFY_FUNC = types.FunctionDeclaration(
-    name="classify_review",
-    description="Classify a Google Play Store review into one intent category.",
-    parameters={
-        "type": "OBJECT", 
+CLASSIFY_TOOL = {
+    "name": "classify_review",
+    "description": "Classify a Google Play Store review into one intent category.",
+    "input_schema": {
+        "type": "object",
         "properties": {
             "intent": {
-                "type": "STRING",
+                "type": "string",
                 "enum": ["bug", "feature", "ux", "vague"],
-                "description": "Primary intent: 'bug' for crashes, 'feature' for requests, etc."
+                "description": "Primary intent: 'bug' for crashes, 'feature' for requests, etc.",
             },
-            "is_vague": {"type": "BOOLEAN"},
-            "confidence": {"type": "NUMBER"},
-            "reasoning": {"type": "STRING"},
+            "is_vague": {"type": "boolean"},
+            "confidence": {"type": "number"},
+            "reasoning": {"type": "string"},
         },
         "required": ["intent", "is_vague", "confidence", "reasoning"],
     },
-)
+}
 
-FOLLOW_UP_FUNC = types.FunctionDeclaration(
-    name="generate_follow_up_questions",
-    description="Generate 3 targeted follow-up questions for a vague review.",
-    parameters={
-        "type": "OBJECT",
+FOLLOW_UP_TOOL = {
+    "name": "generate_follow_up_questions",
+    "description": "Generate 3 targeted follow-up questions for a vague review.",
+    "input_schema": {
+        "type": "object",
         "properties": {
             "questions": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"},
+                "type": "array",
+                "items": {"type": "string"},
             }
         },
         "required": ["questions"],
     },
-)
+}
 
 CLASSIFY_SYSTEM = """
 You are a senior mobile QA engineer analyzing Google Play Store reviews.
@@ -84,27 +83,20 @@ def classify_review(
     review_text: str,
     star_rating: int | None,
 ) -> ClassificationResult:
-    
-    #this is where the review gets classified into one of 4 categories via Gemini 
-    config = types.GenerateContentConfig(
-        system_instruction=CLASSIFY_SYSTEM,
-        tools=[types.Tool(function_declarations=[CLASSIFY_FUNC])],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode="ANY", 
-                allowed_function_names=["classify_review"]
-            )
-        )
+    response = client.messages.create(
+        model=settings.claude_model,
+        max_tokens=1024,
+        system=CLASSIFY_SYSTEM,
+        tools=[CLASSIFY_TOOL],
+        tool_choice={"type": "tool", "name": "classify_review"},
+        messages=[
+            {"role": "user", "content": f"Star rating: {star_rating}/5\n\nReview:\n{review_text}"}
+        ],
     )
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=f"Star rating: {star_rating}/5\n\nReview:\n{review_text}",
-        config=config
-    )
+    tool_use = next(b for b in response.content if b.type == "tool_use")
+    data = tool_use.input
 
-    fc = response.candidates[0].content.parts[0].function_call
-    data = fc.args
     follow_ups: list[str] = []
     if data["is_vague"]:
         follow_ups = _generate_follow_up_questions(review_text)
@@ -120,23 +112,18 @@ def classify_review(
         star_rating=star_rating,
     )
 
+
 def _generate_follow_up_questions(review_text: str) -> list[str]:
-    config = types.GenerateContentConfig(
-        system_instruction=FOLLOW_UP_SYSTEM,
-        tools=[types.Tool(function_declarations=[FOLLOW_UP_FUNC])],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode="ANY", 
-                allowed_function_names=["generate_follow_up_questions"]
-            )
-        )
+    response = client.messages.create(
+        model=settings.claude_model,
+        max_tokens=512,
+        system=FOLLOW_UP_SYSTEM,
+        tools=[FOLLOW_UP_TOOL],
+        tool_choice={"type": "tool", "name": "generate_follow_up_questions"},
+        messages=[
+            {"role": "user", "content": f"Vague review:\n{review_text}"}
+        ],
     )
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=f"Vague review:\n{review_text}",
-        config=config
-    )
-
-    args = response.candidates[0].content.parts[0].function_call.args
-    return list(args["questions"])
+    tool_use = next(b for b in response.content if b.type == "tool_use")
+    return list(tool_use.input["questions"])

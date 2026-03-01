@@ -5,15 +5,21 @@ import base64
 import functools
 import json
 import logging
+from datetime import datetime, timezone
+
+from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from config import settings
+
 from classifier import classify_review
 from fix_generator import generate_fix, refine_fix
 from github_client.pr_creator import create_pr
+from poller import poll_loop
 from rag.indexer import ensure_repo_indexed
 from rag.searcher import search_code
 from sandbox.runner import run_in_sandbox
@@ -24,7 +30,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("prism.main")
 
-app = FastAPI(title="PRism", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    asyncio.create_task(
+        poll_loop(_app_registry, _handle_scraped_review, interval=settings.poll_interval_seconds)
+    )
+    yield
+
+
+app = FastAPI(title="PRism", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -37,6 +51,38 @@ _pipeline_queues: dict[str, asyncio.Queue] = {}
 
 # Maps Play Store package name → GitHub repo URL, registered via the UI
 _app_registry: dict[str, str] = {}
+
+# Low-rated reviews scraped by the poller, waiting for the user to trigger the pipeline
+_pending_reviews: list[dict] = []
+
+
+# ---------------------------------------------------------------------------
+# Scraped review handler (called by poller)
+# ---------------------------------------------------------------------------
+
+async def _handle_scraped_review(package_name: str, repo_url: str, r: dict) -> None:
+    """Add a scraped low-rated review to the pending queue for the user to action."""
+    if len(_pending_reviews) >= settings.max_pending_reviews:
+        logger.debug("Pending queue full (%d) — skipping %s", settings.max_pending_reviews, r.get("reviewId"))
+        return
+
+    text = (r.get("content") or "").strip()
+    if not text:
+        return
+
+    _pending_reviews.append({
+        "review_id": r["reviewId"],
+        "author": r.get("userName"),
+        "text": text,
+        "score": r.get("score", 0),
+        "package_name": package_name,
+        "repo_url": repo_url,
+        "scraped_at": datetime.now(timezone.utc).isoformat(),
+    })
+    logger.info(
+        "Pending: added review %s for %s (score %d)",
+        r["reviewId"], package_name, r.get("score", 0),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +170,50 @@ def remove_app(package_name: str):
 @app.get("/api/apps")
 def list_apps():
     return _app_registry
+
+
+# ---------------------------------------------------------------------------
+# Pending reviews endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/pending-reviews")
+def get_pending_reviews():
+    return _pending_reviews
+
+
+@app.post("/api/pending-reviews/{review_id}/run")
+async def run_pending_review(review_id: str):
+    entry = next((r for r in _pending_reviews if r["review_id"] == review_id), None)
+    if not entry:
+        return {"status": "not_found"}
+
+    _pending_reviews[:] = [r for r in _pending_reviews if r["review_id"] != review_id]
+
+    review = PlayStoreReview(
+        reviewId=entry["review_id"],
+        authorName=entry["author"],
+        repo_url=entry["repo_url"],
+        comments=[{"userComment": {"text": entry["text"], "starRating": entry["score"]}}],
+    )
+    _pipeline_queues[review.reviewId] = asyncio.Queue()
+    _review_history.insert(0, {
+        "review_id": review.reviewId,
+        "text": review.review_text,
+        "star_rating": review.star_rating,
+        "repo_url": review.repo_url,
+        "stages": {},
+        "pr_url": None,
+        "intent": None,
+        "done": False,
+    })
+    asyncio.create_task(run_pipeline(review))
+    return {"status": "accepted", "review_id": review.reviewId}
+
+
+@app.delete("/api/pending-reviews/{review_id}")
+def dismiss_pending_review(review_id: str):
+    _pending_reviews[:] = [r for r in _pending_reviews if r["review_id"] != review_id]
+    return {"status": "ok"}
 
 
 @app.get("/api/pipeline/{review_id}/stream")
@@ -309,7 +399,7 @@ async def run_pipeline(review: PlayStoreReview) -> None:
     # ------------------------------------------------------------------
     # Stage 1: Classify
     # ------------------------------------------------------------------
-    await _emit(rid, {"type": "stage", "stage": "classify", "status": "running", "message": "Sending review to Gemini..."})
+    await _emit(rid, {"type": "stage", "stage": "classify", "status": "running", "message": "Sending review to Claude..."})
     loop = asyncio.get_running_loop()
     try:
         classification = await loop.run_in_executor(
@@ -356,7 +446,7 @@ async def run_pipeline(review: PlayStoreReview) -> None:
     # ------------------------------------------------------------------
     # Stage 3: Generate fix
     # ------------------------------------------------------------------
-    await _emit(rid, {"type": "stage", "stage": "fix", "status": "running", "message": "Generating code fix with Gemini..."})
+    await _emit(rid, {"type": "stage", "stage": "fix", "status": "running", "message": "Generating code fix with Claude..."})
     try:
         fix = await loop.run_in_executor(
             None, functools.partial(generate_fix, classification, code_chunks, repo)
@@ -370,7 +460,7 @@ async def run_pipeline(review: PlayStoreReview) -> None:
         return
 
     if fix is None:
-        await _emit(rid, {"type": "stage", "stage": "fix", "status": "error", "message": "Gemini declined to generate a fix (insufficient context)"})
+        await _emit(rid, {"type": "stage", "stage": "fix", "status": "error", "message": "Claude declined to generate a fix (insufficient context)"})
         for s in ["sandbox", "pr"]:
             await _emit(rid, {"type": "stage", "stage": s, "status": "skip", "message": "Skipped"})
         await _emit(rid, {"type": "done"})
@@ -387,14 +477,17 @@ async def run_pipeline(review: PlayStoreReview) -> None:
 
     for attempt in range(MAX_LINT_RETRIES + 1):
         attempt_label = f"attempt {attempt + 1}/{MAX_LINT_RETRIES + 1}"
-        await _emit(rid, {"type": "stage", "stage": "sandbox", "status": "running",
-                          "message": f"Validating patch in Modal sandbox... ({attempt_label})"})
+        await _emit(rid, {
+            "type": "stage", "stage": "sandbox", "status": "running",
+            "message": f"Validating patch in Modal sandbox... ({attempt_label})"
+        })
+
         try:
             sandbox_result = await loop.run_in_executor(
                 None, functools.partial(run_in_sandbox, repo, current_fix)
             )
         except Exception as exc:
-            logger.exception("[%s] Sandbox failed", rid)
+            logger.exception("[%s] Sandbox executor failed", rid)
             await _emit(rid, {"type": "stage", "stage": "sandbox", "status": "error", "message": str(exc)})
             await _emit(rid, {"type": "stage", "stage": "pr", "status": "skip", "message": "Skipped"})
             await _emit(rid, {"type": "done"})
@@ -403,11 +496,13 @@ async def run_pipeline(review: PlayStoreReview) -> None:
         if sandbox_result.success:
             break
 
-        # Lint failed — try asking Gemini to self-correct (only on first failure)
+        # Lint failed — attempt self-correction before giving up
         if not sandbox_result.lint_passed and attempt < MAX_LINT_RETRIES:
-            logger.info("[%s] Lint failed — asking Gemini to self-correct", rid)
-            await _emit(rid, {"type": "stage", "stage": "sandbox", "status": "running",
-                              "message": f"Lint errors found — asking Gemini to self-correct... (attempt {attempt + 2}/{MAX_LINT_RETRIES + 1})"})
+            logger.info("[%s] Lint failed on attempt %d — requesting self-correction", rid, attempt + 1)
+            await _emit(rid, {
+                "type": "stage", "stage": "sandbox", "status": "running",
+                "message": f"Lint errors found — asking Claude to self-correct... (attempt {attempt + 2}/{MAX_LINT_RETRIES + 1})"
+            })
             try:
                 refined = await loop.run_in_executor(
                     None, functools.partial(
@@ -418,16 +513,32 @@ async def run_pipeline(review: PlayStoreReview) -> None:
                 if refined:
                     current_fix = refined
                     continue
+                else:
+                    logger.warning("[%s] refine_fix returned empty on attempt %d — skipping retry", rid, attempt + 1)
             except Exception:
-                logger.exception("[%s] refine_fix failed", rid)
-        break  # No more retries or lint passed
+                logger.exception("[%s] refine_fix failed on attempt %d", rid, attempt + 1)
+
+        break  # No more retries, lint passed, or refinement unavailable
 
     fix = current_fix
+
     if not sandbox_result.success:
-        lint = "✓" if sandbox_result.lint_passed else "✕"
-        tests = "✓" if sandbox_result.test_passed else "✕"
-        await _emit(rid, {"type": "stage", "stage": "sandbox", "status": "error",
-                          "message": f"Lint {lint}  Tests {tests} — not opening PR"})
+        lint_icon = "✓" if sandbox_result.lint_passed else "✕"
+        test_icon = "✓" if sandbox_result.test_passed else "✕"
+
+        # Distinguish failure modes for better observability
+        if not sandbox_result.lint_passed:
+            failure_reason = f"Lint {lint_icon} — could not auto-correct after {MAX_LINT_RETRIES} retry attempt(s)"
+        elif not sandbox_result.test_passed:
+            failure_reason = f"Lint {lint_icon}  Tests {test_icon} — tests failing (may be pre-existing, check repo health)"
+        else:
+            failure_reason = f"Lint {lint_icon}  Tests {test_icon} — unknown validation failure"
+
+        logger.warning(
+            "[%s] Sandbox validation failed — lint_passed=%s test_passed=%s",
+            rid, sandbox_result.lint_passed, sandbox_result.test_passed
+        )
+        await _emit(rid, {"type": "stage", "stage": "sandbox", "status": "error", "message": failure_reason})
         await _emit(rid, {"type": "stage", "stage": "pr", "status": "skip", "message": "Skipped (validation failed)"})
         await _emit(rid, {"type": "done"})
         return
