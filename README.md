@@ -14,4 +14,4 @@ What it does:
 Built With:
 python, claude, fastapi, githubapi, googleplayscraper, html, modal, pineconedb, voyageapi
 
-Check out the Devpost: https://devpost.com/software/prism-9xac16?_gl=1*dvgwer*_gcl_au*MTIwMzQ5NzM2Ni4xNzY4MjQyMjQ3*_ga*ODMwMjM5MzYzLjE3NjAyMjU5NzM.*_ga_0YHJK3Y10M*czE3NzIzNTY4MTAkbzQ0JGcxJHQxNzcyMzU2ODY0JGo2JGwwJGgw 
+Check out the Devpost: [Link](https://devpost.com/software/prism-9xac16).
